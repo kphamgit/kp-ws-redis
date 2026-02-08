@@ -1,7 +1,10 @@
 const Redis = require("ioredis");
 
 const WebSocket = require("ws");
-const wss = new WebSocket.Server({ port: 8080 });
+//const wss = new WebSocket.Server({ port: 8080 });
+const PORT = process.env.PORT || 8080; // Use PORT from environment variable or default to 8080
+const wss = new WebSocket.Server({ port: PORT }); // either PORT from .env or 
+// assigned automatically by hosting provider (e.g., Heroku) when deployed
 
 // Create two Redis clients: one for subscribing and one for publishing/other commands
 const subscriber = new Redis(); // For subscribing to channels
@@ -35,13 +38,13 @@ subscriber.on("message", (channel, message) => {
       console.log("Message saved to Redis.");
     }
   });
-  console.log(publisher.get("message", (err, result) => {
+  publisher.get("message", (err, result) => {
     if (err) {
       console.error("Failed to retrieve message from Redis:", err);
     } else {
       console.log("Retrieved message from Redis:", result);
     }
-  }));
+  });
 });
 
 // Handle WebSocket connections
