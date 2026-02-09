@@ -16,8 +16,8 @@ const redisOptions = {
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379"; // Use REDIS_URL from environment variable or default to local Redis
 // Create two Redis clients: one for subscribing and one for publishing/other commands
-const subscriber = new Redis(REDIS_URL, redisOptions); // For subscribing to channels
-const publisher = new Redis(REDIS_URL, redisOptions);  // For publishing messages or other Redis commands
+const subscriber = new Redis(REDIS_URL); // For subscribing to channels
+const publisher = new Redis(REDIS_URL);  // For publishing messages or other Redis commands
 
 // Subscribe to the "notifications" channel
 subscriber.subscribe("notifications", (err, count) => {
@@ -35,6 +35,7 @@ subscriber.on("message", (channel, message) => {
   // Broadcast the message to all connected WebSocket clients
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
+        console.log(`Broadcasting message to client: ${message}`);
       client.send(message);
     }
   });
@@ -77,6 +78,39 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     console.log("Client disconnected.");
   });
+
+  ws.on("message", (rawData) => {
+    try {
+        // Data usually arrives as a Buffer, so we parse it
+        const data = JSON.parse(rawData);
+        if (data.type === 'ping') {
+            // Respond to ping messages if you want to
+            // it's okay to ignore them too
+            console.log("Received ping,");
+            ws.send(JSON.stringify({ type: 'pong' }));
+            return;
+        }
+
+        if (data.type === 'CHAT_MESSAGE') {
+            console.log(`New message: ${data.text}`);
+
+            // BROADCAST: Send this to every connected student
+            wss.clients.forEach((client) => {
+                if (client.readyState === WebSocket.OPEN) { // 1 means the connection is OPEN
+                    client.send(JSON.stringify({
+                        type: 'NEW_CHAT',
+                        user: data.user,
+                        text: data.text
+                    }));
+                }
+            });
+        }
+    } catch (err) {
+        console.error("Error parsing message:", err);
+    }
+});
+
+
 });
 
 console.log("WebSocket server is up and running on port " + PORT);
