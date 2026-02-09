@@ -6,9 +6,10 @@ const PORT = process.env.PORT || 8080; // Use PORT from environment variable or 
 const wss = new WebSocket.Server({ port: PORT }); // either PORT from .env or 
 // assigned automatically by hosting provider (e.g., Heroku) when deployed
 
+const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379"; // Use REDIS_URL from environment variable or default to local Redis
 // Create two Redis clients: one for subscribing and one for publishing/other commands
-const subscriber = new Redis(); // For subscribing to channels
-const publisher = new Redis();  // For publishing messages or other Redis commands
+const subscriber = new Redis(REDIS_URL); // For subscribing to channels
+const publisher = new Redis(REDIS_URL);  // For publishing messages or other Redis commands
 
 // Subscribe to the "notifications" channel
 subscriber.subscribe("notifications", (err, count) => {
@@ -49,8 +50,8 @@ subscriber.on("message", (channel, message) => {
 
 // Handle WebSocket connections
 wss.on("connection", (ws) => {
-  console.log("Client connected via native WebSocket. New chatter in the house!!!!");
-  ws.send(JSON.stringify("Welcome to the chaos—say hi!"));
+  console.log("Client connected via native WebSocket.");
+  ws.send(JSON.stringify("Welcome to the WebSocket server!"));
 
 
   /*
@@ -66,8 +67,8 @@ wss.on("connection", (ws) => {
 
 
   ws.on("close", () => {
-    console.log("Someone bailed—rude.");
+    console.log("Client disconnected.");
   });
 });
 
-console.log("Server's up on port 8080—let's chat!");
+console.log("WebSocket server is up and running on port " + PORT);
