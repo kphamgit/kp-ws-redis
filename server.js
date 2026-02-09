@@ -6,10 +6,18 @@ const PORT = process.env.PORT || 8080; // Use PORT from environment variable or 
 const wss = new WebSocket.Server({ port: PORT }); // either PORT from .env or 
 // assigned automatically by hosting provider (e.g., Heroku) when deployed
 
+// Create Redis clients with TLS options
+const redisOptions = {
+    tls: {
+      rejectUnauthorized: false, // Allow self-signed certificates
+    },
+  };
+  
+
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379"; // Use REDIS_URL from environment variable or default to local Redis
 // Create two Redis clients: one for subscribing and one for publishing/other commands
-const subscriber = new Redis(REDIS_URL); // For subscribing to channels
-const publisher = new Redis(REDIS_URL);  // For publishing messages or other Redis commands
+const subscriber = new Redis(REDIS_URL, redisOptions); // For subscribing to channels
+const publisher = new Redis(REDIS_URL, redisOptions);  // For publishing messages or other Redis commands
 
 // Subscribe to the "notifications" channel
 subscriber.subscribe("notifications", (err, count) => {
