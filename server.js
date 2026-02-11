@@ -54,10 +54,25 @@ subscriber.subscribe("notifications", (err, count) => {
 });
 
 // Listen for messages on the "notifications" channel
+// Right now, receiving TWO message_types in this channel from Django:
+//    1) live_score (Django processes the live question attemp, calculate live score and publich to Redis)
+//and 2) live_quiz_id (Django receive an http api call from client to start a live quiz with a quiz_id,
+// then it will validate the quiz_id and publish it to Redis if it's valid, so that all clients will know a live quiz has started and what quiz_id it is)
+// otherwise, it will send an http error reponse back to the client
+//    3) live_question_number (Django receives an http api call from client when a teacher sends 
+//  live quiz question and (together with quiz_id). Then Django will validate the quiz_id and question_number, 
+// and publish the live_question_number to Redis if it's valid, so that all clients will know a new live quiz question has been sent out and what the question number is)
+//    4) live_question_retrieved. Django receives an http api call with quiz_id and question_number included from client when a 
+
 subscriber.on("message", (channel, message) => {
   console.log(`Received message from Redis channel ${channel}: ${message}`);
+  /*
+Retrieved message from Redis: {"message_type": "live_score", "content": 5, "user_name": "student1"}
+ message_type after JSON parsing:  live_score
+  */
 
   // Broadcast the message to all connected WebSocket clients
+  console.log(`Broadcasting message  ${message} to all connected WebSocket clients.`);
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(message);
@@ -65,6 +80,7 @@ subscriber.on("message", (channel, message) => {
   });
 
   // Use the publisher client to save the message to Redis
+  /*
   publisher.set(`message`, message, (err) => {
     if (err) {
       console.error("Failed to save message to Redis:", err);
@@ -72,7 +88,9 @@ subscriber.on("message", (channel, message) => {
       console.log("Message saved to Redis.");
     }
   });
-  
+  */
+
+  /*
   publisher.get("message", (err, result) => {
     if (err) {
       console.error("Failed to retrieve message from Redis:", err);
@@ -88,6 +106,7 @@ subscriber.on("message", (channel, message) => {
         });
     }
   });
+  */
   
 });
 
@@ -108,11 +127,11 @@ wss.on("connection", async (ws, req) => {
     // so that the client can display a list of currently connected users when they first connect
     try {
       const loggedInUsers = await publisher.lrange("logged_in_users", 0, -1);
-      console.log("Logged in users retrieved from Redis:", loggedInUsers);
+      //console.log("Logged in users retrieved from Redis:", loggedInUsers);
   
       // Filter out the current user from the list of other logged-in users
       const other_logged_in_users = loggedInUsers.filter((loggedInUser) => loggedInUser !== user_name);
-      console.log("***** Other logged in users: ", other_logged_in_users);
+      //console.log("***** Other logged in users: ", other_logged_in_users);
   
       const [quizId, liveQuestionNumber, studentsLiveQuestionNumbers,  liveTotalScore, ] = await Promise.all([
         publisher.get(`live_quiz_id`), // Get quiz_id
@@ -205,7 +224,7 @@ publisher.lrange("logged_in_users", 0, -1, (err, loggedInUsers) => {
         let parsedMsg;
         try {
           parsedMsg = JSON.parse(msg);  // parse msg as JSON string into a JavaScript object
-          console.log("Parsed message: ", parsedMsg);
+          //console.log("Parsed message: ", parsedMsg);
           /*
 Parsed message:  {
 message_type: 'live_score',
@@ -215,7 +234,7 @@ user_name: 'student1'
           */
 
           message_type = parsedMsg.message_type;
-          console.log("Message type: ", message_type);
+          //console.log("Message type: ", message_type);
           if (message_type === "ping") {
               //console.log("Received 'ping' from client. Responding with 'pong'.");
               // you don't have to respond to pings if you don't want to, but it's a common convention to do so
@@ -233,112 +252,6 @@ user_name: 'student1'
                 }));
               }
             });
-          }
-          else if (message_type === "live_score") {
-            console.log("Received live_score message.", "parsedMessage.content: ", parsedMsg.content);    /*
-          Parsed message:  {
-            message_type: 'live_score',
-            content: { live_question_number: '1', score: 5 },
-            user_name: 'student1'
-          }
-                      */
-            const key_for_total_live_score = parsedMsg.user_name + "_total_live_score";
-            // save total_live_score in Redis with key "user_name_total_live_score"
-            // retrieve current total_live_score from Redis, if any, and add to incoming score
-            publisher.get(key_for_total_live_score, (err, result) => {
-              if (err) {
-                console.error("Failed to get total_live_score from Redis:", err);
-              } else {
-                let current_total_live_score = 0; // defaut to 0 if key does not exist
-                if (result) { // key exists
-                  current_total_live_score = parseInt(result);
-                }
-                const new_total_live_score = current_total_live_score + parsedMsg.content.score;
-                // save new total_live_score back to Redis
-                publisher.set(key_for_total_live_score, new_total_live_score, (err) => {
-                  if (err) {
-                    console.error("Failed to save total_live_score to Redis:", err);
-                  } else {
-                    console.log("total_live_score saved to Redis for user ", parsedMsg.user_name, ": ", new_total_live_score);
-                  }
-                });
-              }
-            });
-
-            const key = parsedMsg.user_name + "_" + "live_question_number";
-            publisher.get(key, (err, result) => {
-              if (err) {
-                console.error("Failed to get live_question_number from Redis:", err);
-              } else {
-
-                console.log("Value of key ", key, " before deletion is : ", result);
-              }
-            });
-            publisher.del(key, (err) => {
-              if (err) {
-                console.error("Failed to delete live_question_number from Redis:", err);
-              } else {
-                console.log("live_question_number deleted from Redis for user: ", parsedMsg.user_name);
-                // broadcast live_score message to all connected clients
-
-              }
-            });
-            // broadcast live_score and live_question_number to all connected clients
-            wss.clients.forEach((client) => {
-              if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                  message_type: parsedMsg.message_type,
-                  content: parsedMsg.content,
-                  user_name: parsedMsg.user_name,
-                }));
-              }
-            });
-
-          }
-          else if (message_type === "live_quiz_id") {
-          // Broadcast chat message to all connected clients
-          console.log("********* receive ", parsedMsg.message_type, ". Broadcasting live_quiz_id message to all clients.");
-        //save live_quiz_id in Redis with key "live_quiz_id"
-        publisher.set("live_quiz_id", parsedMsg.content, (err) => {
-            if (err) {
-                console.error("Failed to save live_quiz_id to Redis:", err);
-            } else {
-                console.log("live_quiz_id saved to Redis:", parsedMsg.content);
-                console.log("Broadcasting live_quiz_id to all clients.");
-                wss.clients.forEach((client) => {
-                  if (client.readyState === WebSocket.OPEN) {
-                      client.send(JSON.stringify({
-                          message_type: parsedMsg.message_type,
-                          content: parsedMsg.content,
-                          user_name: parsedMsg.user_name,
-                      }));
-                  }
-              });
-            }
-          });
-          }
-          else if (message_type === "student_acknowleged_live_question_number") {
-            console.log("Received student_acknowleged_live_question_number from ", parsedMsg.user_name, " for question number ", parsedMsg.content);
-            const key = parsedMsg.user_name + "_live_question_number";
-            // save to Redis
-            publisher.set(key, parsedMsg.content, (err) => {
-              if (err) {
-                console.error("Failed to save live_question_number to Redis:", err);
-              } else {
-                console.log("live_question_number saved to Redis:", parsedMsg.content);
-                console.log("Broadcasting live_question_number to all clients.");
-                wss.clients.forEach((client) => {
-                  if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({
-                      message_type: parsedMsg.message_type,
-                      content: parsedMsg.content,
-                      user_name: parsedMsg.user_name,
-                    }));
-                  }
-                });
-              }
-            });
-
           }
           //terminate_live_quiz
           else if (message_type === "terminate_live_quiz") {
