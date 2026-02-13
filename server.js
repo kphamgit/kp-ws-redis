@@ -44,9 +44,42 @@ const redisOptions = {
     }
   });
 
-  subscriber.on("message", (channel, message) => {
-    console.log(`Received message from Redis channel ${channel}: ${message}`);
-  });
+  const publisher = new Redis(redisUrl, options);  // For publishing messages or other Redis commands
+
+/*
+// Right now, receiving FOUR kinds of messages via this channel from Django:
+//    1) live_score (Django processes the live question attemp, calculate live score and publich to Redis)
+//    2) live_quiz_id (Django receive an http api call from client to start a live quiz with a quiz_id,
+// then it will validate the quiz_id and publish it to Redis if it's valid, so that all clients will know a live quiz has started and what quiz_id it is)
+// otherwise, it will send an http error reponse back to the client
+//    3) live_question_number (Django receives an http api call from client when a teacher sends
+//  live quiz question and (together with quiz_id). Then Django will validate the quiz_id and question_number,
+// and publish the live_question_number to Redis if it's valid, so that all clients will know a new live quiz question has been sent out and what the question number is)
+//    4) live_question_retrieved. Django receives an http api call with quiz_id and question_number included from client when a
+  */
+  
+subscriber.on("message", (channel, message) => {
+  console.log(`Received message from Redis channel ${channel}: ${message}`);
+  let parsedMessage;
+  try {
+    parsedMessage = JSON.parse(message);  // parse message as JSON string into a JavaScript object
+    console.log("Parsed message: ", parsedMessage);
+    if( parsedMessage.message_type === "live_quiz_id") {
+      console.log("Received live_quiz_id message from Redis. quiz_id: ", parsedMessage.content);
+    }
+    if( parsedMessage.message_type === "live_question_retrieved") {
+      console.log("Received live_question_retrieved message from Redis. quiz_id: ", parsedMessage.content.quiz_id, " question_number: ", parsedMessage.content.question_number);
+    }
+    if (parsedMessage.message_type === "live_score") {
+      console.log("Received live_score message from Redis. quiz_id: ", parsedMessage.content.quiz_id, " question_number: ", parsedMessage.content.live_question_number, " score: ", parsedMessage.content.score);
+    }
+
+  } catch (e) {
+    console.error("Failed to parse message as JSON: ", e);
+    return; // Exit the handler if message is not valid JSON
+  }
+
+});
   
   
 
