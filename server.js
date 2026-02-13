@@ -99,31 +99,38 @@ wss.on("connection", async (ws, req) => {
   // in message handlers (including close handler) without having to parse the URL again
     ws.user_name = user_name;
 
-    console.log("*********** User", user_name, "connected. WebSocket URL:", wsURL);
-    // send a welcome message to the client when they connect
-    // but first, collect all logged in users from Redis and include that in the welcome message
-    // so that the client can display a list of currently connected users when they first connect
-    try {
+  console.log("*********** User", user_name, "connected. WebSocket URL:", wsURL);
+  const newUser = {
+      name: user_name,
+      live_question_number: "0", // initial dummy value to indicate no question yet
+      live_total_score: "999", // initial dummy value to indicate no score yet
+      // need to initialize these values so that JSON.GET won't return null later
+      // when we try to update them
+      // see comments in live_score message handler above
+  };
 
-    }
-    catch (e) {
-        console.error("Failed to retrieve logged in users from Redis:", e);
-    }
+    console.log("********* Storing new user in Redis: ", newUser);
+    await publisher.call('JSON.SET', `user:${user_name}`, '$', JSON.stringify(newUser));
 
-  const userJoinedMessage = JSON.stringify({
+    //test
+    const totalScore = await publisher.call('JSON.GET', `user:${user_name}`, '$.live_total_score');
+    console.log(`Total live score for user ${user_name} after initialization: `, totalScore);
+    // end test
+    const userJoinedMessage = JSON.stringify({
     message_type: "another_user_joined",
     user_name: user_name
   })
 
   // use wss.clients to broadcast a message to all connected clients that a new user has joined
   // except the new user themselves (since they already got a welcome message)
+  /*
   console.log(`Broadcasting to all clients that user ${user_name} has joined the session.`);
     wss.clients.forEach((client) => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {
             client.send(userJoinedMessage);
         }   
     });
-
+*/
 
   ws.on("message", async (msg) => {
         console.log(`Received message from client: ${msg}`);
