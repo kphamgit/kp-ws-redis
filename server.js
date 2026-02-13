@@ -18,18 +18,25 @@ const redisOptions = {
 
   console.log("Running in environment: ", process.env.NODE_ENV);
 
-  const redisOptions = process.env.NODE_ENV === "production" ? {
-    tls: {
-      rejectUnauthorized: false, // Allow self-signed certificates in production
-    },
-    connectTimeout: 20000, // Increase timeout to 20 seconds
-  } : {}; // No TLS options in development
+  // 1. Determine the URL: Use RedisCloud in prod, or Localhost in dev
+  const redisUrl = process.env.REDISCLOUD_URL || 'redis://127.0.0.1:6379';
   
+  // 2. Setup options
+  const options = {
+      // Redis Cloud handles TLS normally, so we usually don't need 
+      // the 'rejectUnauthorized' hack we needed for Heroku's native store.
+      // However, keeping a retry strategy is good practice.
+      retryStrategy: (times) => Math.min(times * 50, 2000)
+  };
   
+  const redis = new Redis(redisUrl, options);
+  const subscriber = new Redis(redisUrl, options);
+  
+  redis.on('ready', () => console.log(`🚀 Redis connected to: ${redisUrl}`));
 
-const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379"; // Use REDIS_URL from environment variable or default to local Redis
+//const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379"; // Use REDIS_URL from environment variable or default to local Redis
 // Create two Redis clients: one for subscribing and one for publishing/other commands
-console.log("Connecting to Redis at: ", REDIS_URL);
+//console.log("Connecting to Redis at: ", REDIS_URL);
 
 // Handle WebSocket connections
 wss.on("connection", async (ws, req) => {
