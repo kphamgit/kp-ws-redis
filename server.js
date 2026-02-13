@@ -34,6 +34,22 @@ const redisOptions = {
   
   redis.on('ready', () => console.log(`🚀 Redis connected to: ${redisUrl}`));
 
+  // Subscribe to the "notifications" channel to receive messages published to that channel
+  // from Django
+  subscriber.subscribe("notifications", (err, count) => {
+    if (err) {
+      console.error("Failed to subscribe: ", err);
+    } else {
+      console.log(`Subscribed to ${count} channel(s). Listening for messages on the 'notifications' channel.`);
+    }
+  });
+
+  subscriber.on("message", (channel, message) => {
+    console.log(`Received message from Redis channel ${channel}: ${message}`);
+  });
+  
+  
+
 //const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379"; // Use REDIS_URL from environment variable or default to local Redis
 // Create two Redis clients: one for subscribing and one for publishing/other commands
 //console.log("Connecting to Redis at: ", REDIS_URL);
