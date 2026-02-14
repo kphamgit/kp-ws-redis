@@ -44,8 +44,10 @@ const redisOptions = {
     }
   });
 
-  const publisher = new Redis(redisUrl, options);  // For publishing messages or other Redis commands
-
+  // const publisher = new Redis(redisUrl, options);  // 
+  // kpham: Don't try to use a "Publisher" client in Node.js unless Node.js itself needs to shout to other services. 
+  // In my setup, Django is the Publisher and Node.js is the Subscriber. 
+  // to GET and SET Redis data, use the regular client, which is redis defined above.
 /*
 // Right now, receiving FOUR kinds of messages via this channel from Django:
 //    1) live_score (Django processes the live question attemp, calculate live score and publich to Redis)
@@ -58,21 +60,59 @@ const redisOptions = {
 //    4) live_question_retrieved. Django receives an http api call with quiz_id and question_number included from client when a
   */
   
-subscriber.on("message", (channel, message) => {
-  console.log(`Received message from Redis channel ${channel}: ${message}`);
+subscriber.on("message", async (channel, message) => {
+  //console.log(`Received notification from Redis channel ${channel}: ${message}`);
+  
   let parsedMessage;
   try {
     parsedMessage = JSON.parse(message);  // parse message as JSON string into a JavaScript object
-    console.log("Parsed message: ", parsedMessage);
+    //console.log("Parsed notification message: ", parsedMessage);
     if( parsedMessage.message_type === "live_quiz_id") {
-      console.log("Received live_quiz_id message from Redis. quiz_id: ", parsedMessage.content);
+      // kpham: note that live_quiz_is HAD BEEN saved to Redis store by Django before publishing the live_quiz_id message to Redis channel, so we can safely retrieve it here if needed.
+      console.log("Received live_quiz_id notification from Redis. ", parsedMessage);
+    }
+    if (parsedMessage.message_type === "live_question_number") {
+      // kpham: note that live_question_number HAD BEEN saved to Redis store by Django before publishing the live_question_number message to Redis channel, so we can safely retrieve it here if needed.
+      console.log("Received live_question_number notification from Redis. ", parsedMessage);
     }
     if( parsedMessage.message_type === "live_question_retrieved") {
-      console.log("Received live_question_retrieved message from Redis. quiz_id: ", parsedMessage.content.quiz_id, " question_number: ", parsedMessage.content.question_number);
-    }
+      console.log("Received live_question_retrieved notification from Redis. : ", parsedMessage);
+      // use FT.SEARCH to find all users
+      const user_name = parsedMessage.user_name;
+      const live_question_number = parsedMessage.content;
+
+      console.log(" type of live_question_number is: ", typeof live_question_number);
+      console.log(" live_question_number is: ", live_question_number); // an integer
+
+      // use JSON module to update live_question_number for all users in Redis, so that when a new user connects after the live question is sent out, they will get the correct live_question_number in the welcome message and update their UI accordingly
+      console.log(`Updating live_question_number to ${live_question_number} for user ${user_name} in Redis.`);
+      //await redis.call('JSON.SET', `user:${user_name}`, '$.live_question_number', JSON.stringify(live_question_number));
+      
+      const allUsersResultsb4 = await redis.call('FT.SEARCH', 'user_idx', '*');
+      const userRecordsb4 = converter(allUsersResultsb4);
+      console.log(" ALL user records BEFORE updating live_question_number for user ", user_name, "is: ", userRecordsb4);
+    
+      //const qNumber = 5;
+
+// JSON.stringify(5) results in the string "5"
+    await redis.call('JSON.SET', `user:${user_name}`, '$.live_question_number', live_question_number);
+      //KPHAM: in the above expression, need to convert live_question_number to string first before JSON.stringify, 
+      // because if live_question_number is a number, then JSON.stringify will convert it to a string with quotes (e.g., "5"), and when we retrieve it later in the client side and try to use it as a number, it will cause issues. By converting it to string first, we ensure that the value stored in Redis is a plain string without extra quotes, so that when we retrieve it later, we can use it directly as a string or convert to number as needed without worrying about extra quotes.
+     
+      const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
+      const userRecords = converter(allUsersResults);
+      console.log(" ALL user records AFTER updating live_question_number for user ", user_name, "is: ", userRecords);
+      
+      }
     if (parsedMessage.message_type === "live_score") {
-      console.log("Received live_score message from Redis. quiz_id: ", parsedMessage.content.quiz_id, " question_number: ", parsedMessage.content.live_question_number, " score: ", parsedMessage.content.score);
+      console.log("Received live_score notification from Redis: ", parsedMessage, " question_number: ", parsedMessage.content.live_question_number);
     }
+    // broadcast the message to all connected WebSocket clients, so that they can update their UIs accordingly
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message); // send the original message string to clients, since they can parse it as JSON themselves if needed
+      }
+    });
 
   } catch (e) {
     console.error("Failed to parse message as JSON: ", e);
@@ -84,18 +124,6 @@ subscriber.on("message", (channel, message) => {
 
 function converter(inputData) {
     const [count, ...data] = inputData;
-    //const [count, ...data] =  redis.call('FT.SEARCH', 'user_idx', query);
-    // console.log("Converter input data: ", inputData);
-    /*
-    Converter input data:  [
-  1,
-  'user:teacher',
-  [
-    '$',
-    '{"name":"teacher","live_question_number":"0","live_total_score":"999"}'
-  ]
-]
-    */
 
     const results = [];
     // go through data array in chunks of 2 (key and fields array)
@@ -125,7 +153,7 @@ function converter(inputData) {
 // Handle WebSocket connections
 wss.on("connection", async (ws, req) => {
   const wsURL = req.url;
-  console.log("Client connected via native WebSocket url=", wsURL);
+  //console.log("Client connected via native WebSocket url=", wsURL);
   //client connected via native WebSocket url= /teacher/
   // strip leading slash and trailing slash if any
   const user_name = wsURL.replace(/^\/|\/$/g, '');
@@ -135,52 +163,58 @@ wss.on("connection", async (ws, req) => {
     ws.user_name = user_name;
 
   console.log("*********** User", user_name, "connected. WebSocket URL:", wsURL);
+  // get all users from Redis and print out for debugging
+  const all_users_before = await redis.call('FT.SEARCH', 'user_idx', '*');
+  console.log("All users in Redis before adding new user: ", all_users_before);
   const newUser = {
       name: user_name,
-      live_question_number: "0", // initial dummy value to indicate no question yet
-      live_total_score: "999", // initial dummy value to indicate no score yet
+      live_question_number: 0, // initial dummy value to indicate no question yet
+      live_total_score: 999, // initial dummy value to indicate no score yet
       // need to initialize these values so that JSON.GET won't return null later
       // when we try to update them
       // see comments in live_score message handler above
   };
 
-    console.log("********* Storing new user in Redis: ", newUser);
-    await publisher.call('JSON.SET', `user:${user_name}`, '$', JSON.stringify(newUser));
+    //console.log("********* Storing new user in Redis: ", newUser);
+    await redis.call('JSON.SET', `user:${user_name}`, '$', JSON.stringify(newUser));
 
-    //test
-    const totalScore = await publisher.call('JSON.GET', `user:${user_name}`, '$.live_total_score');
-    console.log(`Total live score for user ${user_name} after initialization: `, totalScore);
-    // end test
+    const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
+    console.log("RAW Search results for all users after ADDING: ", allUsersResults);
 
-    
+    //console.log("Search results for all users: ", allUsersResults);
+    const userRecords = converter(allUsersResults);
+    //console.log("Extracted user records (using indices) for welcome message: ", userRecords);
+
+    // retrieve live_quiz_id from Redis (if any) and include it in the welcome message, so that client can update its UI accordingly if a live quiz is already in progress when the user connects
+    const live_quiz_id = await redis.call('GET', 'live_quiz_id');
+
+    //console.log(`User ${user_name} connected. Sending welcome message with current live_quiz_id: ${live_quiz_id} and list of other connected users: `, userRecords);
     const welcomeMessage = JSON.stringify({
       message_type: "welcome_message",
       content: `Welcome ${user_name} to the WebSocket server!`,
       user_name: user_name,
-      //other_connected_users: userRecords, // include info of all other connected users in the welcome message, so that client can update its UI accordingly
-      //live_quiz_id: liveQuizId // include current live_quiz_id in the welcome message, so that client can update its UI accordingly if a live quiz is already in progress when the user connects
+      other_connected_users: userRecords, // include info of all other connected users in the welcome message, so that client can update its UI accordingly
+      live_quiz_id: live_quiz_id, // include current live_quiz_id in the welcome message, so that client can update its UI accordingly if a live quiz is already in progress
     });
   
+    //console.log(`Sending welcome message to user ${user_name}: `, welcomeMessage);
+
     ws.send(welcomeMessage); // Send to this client only
 
-
-// The output is an array: [total_count, key_1, [field, value, ...], key_2, ...]
-
-    const userJoinedMessage = JSON.stringify({
-    message_type: "another_user_joined",
-    user_name: user_name
-  })
-
-  // use wss.clients to broadcast a message to all connected clients that a new user has joined
-  // except the new user themselves (since they already got a welcome message)
-  /*
-  console.log(`Broadcasting to all clients that user ${user_name} has joined the session.`);
-    wss.clients.forEach((client) => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-            client.send(userJoinedMessage);
-        }   
-    });
-*/
+    // also notify all other connected clients about the new user, so that they can update their UIs accordingly (e.g., show the new user in the list of logged in users)
+    
+  
+    // use wss.clients to broadcast a message to all connected clients that a new user has joined
+    // except the new user themselves (since they already got a welcome message)
+    //console.log(`Broadcasting to all clients that user ${user_name} has joined the session.`);
+      wss.clients.forEach((client) => {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify({
+                message_type: "another_user_joined",
+                user_name: user_name,
+          }));
+          }   
+      });
 
   ws.on("message", async (msg) => {
         console.log(`Received message from client: ${msg}`);
@@ -203,7 +237,7 @@ user_name: 'student1'
               // you don't have to respond to pings if you don't want to, but it's a common convention to do so
               //ws.send("pong");
           }
-          else if (message_type === "chat" || message_type === "live_question_number") {
+          else if (message_type === "chat") {
             // Broadcast chat message to all connected clients
             console.log("receive ", parsedMsg.message_type, ". Broadcasting chat message to all clients.", "message content: ", parsedMsg.content);
             wss.clients.forEach((client) => {
@@ -242,12 +276,6 @@ user_name: 'student1'
             });
 
           }
-          else if (message_type === "live_quiz_id") {
-          // Broadcast chat message to all connected clients
-          console.log("********* receive ", parsedMsg.message_type, ". Broadcasting live_quiz_id message to all clients.");
-        //save live_quiz_id in Redis with key "live_quiz_id"
-   
-          }
           else if (message_type === "student_acknowleged_live_question_number") {
             console.log("Received student_acknowleged_live_question_number from ", parsedMsg.user_name, " for question number ", parsedMsg.content);
             const key = parsedMsg.user_name + "_live_question_number";
@@ -256,6 +284,9 @@ user_name: 'student1'
           //terminate_live_quiz
           else if (message_type === "terminate_live_quiz") {
             // broadcast terminate_live_quiz message to all connected clients
+            // use JSON.DEL to remove live_quiz_id and live_question_number from Redis, so that when a new user connects after the quiz is terminated, they won't get outdated live_quiz_id and live_question_number in the welcome message
+            await redis.call('DEL', 'live_quiz_id');
+            await redis.call('DEL', 'live_question_number');
             // so they can clear their UIs
             wss.clients.forEach((client) => {
               if (client.readyState === WebSocket.OPEN) {
@@ -270,19 +301,53 @@ user_name: 'student1'
           else if (message_type === "TEST") {
             console.log("Received TEST message. This is just for testing purposes.");
             const user_name = parsedMsg.user_name;
-            //const found_user = await redis.call('JSON.GET', `user:${user_name}`, '$');
-            // Find a user by name
-            //const results = await redis.call('FT.SEARCH', 'user_idx', '*');
-
-            //console.log("Search results for user name ", user_name, ": ", results);
 
             // find all users
-            const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
+            if (user_name === "all") {
+              const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
+              const userRecords = converter(allUsersResults);
+              console.log("All user records: ", userRecords);
+            }
+            else {
+              // extract user record for the specific user from the search results using converter function
+              const userResults = await redis.call('FT.SEARCH', 'user_idx', `@name:${user_name}`);
+              if (userResults[0] === 0) {
+                console.log(`No user record found for user name ${user_name}`);
+                return;
+              }
+              const userRecords = converter(userResults);
+              console.log(`FOUND User records for user name ${user_name}: `, userRecords);
+            }
 
             //console.log("Search results for all users: ", allUsersResults);
-            const userRecords = converter(allUsersResults);
-            console.log("Extracted user records: ", userRecords);
+         
 
+          }
+          else if (message_type === "CLEAR_REDIS_STORE") {
+              console.log("Received CLEAR_REDIS_STORE message. Clearing all user records from Redis store for testing purposes.");
+              // use FT.SEARCH to find all users except user_name "teacher"
+              // const allUsersExceptTeachers = await redis.call('FT.SEARCH', 'user_idx', '* -@name:teacher');
+              // The minus sign (-) acts as a "NOT" operator
+                const allUsersExceptTeachers = await redis.call('FT.SEARCH', 'user_idx', '-@name:teacher');
+
+              //const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
+              const userRecords = converter(allUsersExceptTeachers);
+              console.log(" ALL user records BEFORE clearing Redis store: ", userRecords);
+  
+              // use JSON.DEL to remove each user record from Redis
+              for (const user of userRecords) {
+                const user_name = user.name;
+                console.log(`**************** Removing user ${user_name} from Redis store.`);
+                JSON_DEL_KEY = `user:${user_name}`;
+                await redis.call('JSON.DEL', JSON_DEL_KEY);
+                console.log(`User ${user_name} removed from Redis successfully.`);
+              }
+              //const allUsersResultsAfterClear = await redis.call('FT.SEARCH', 'user_idx', '*');
+              // const userRecordsAfterClear = converter(allUsersResultsAfterClear);
+              //console.log(" ALL user records AFTER clearing Redis store: ", userRecordsAfterClear);
+              // clear live_quiz_id and live_question_number from Redis as well, 
+              await redis.call('DEL', 'live_quiz_id');
+              await redis.call('DEL', 'live_question_number');
           }
 
         } catch (e) {
@@ -313,9 +378,23 @@ Received message from client: {"message_type":"chat","content":"ww","user_name":
   ws.on("close", () => {
     console.log("WebSocket connection closed by client. url =", wsURL);
     console.log("Client disconnected. User", ws.user_name);
+    // broadcast to all connected clients that a user has left, so that they can update their UIs accordingly (e.g., remove the user from the list of logged in users)
+    const userLeftMessage = JSON.stringify({
+      message_type: "user_disconnected",
+      user_name: ws.user_name,
+    });
+    console.log(`Broadcasting to all clients that user ${ws.user_name} has left the session.`);
+    
+    wss.clients.forEach((client) => {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        client.send(userLeftMessage);
+      }
+    });
+
     // use JSON.DEL to remove the user record from Redis when a user disconnects, so that the list of logged in users is always up to date
+    console.log(`**************** Removing user ${ws.user_name} from Redis store.`);
     JSON_DEL_KEY = `user:${ws.user_name}`;
-    publisher.call('JSON.DEL', JSON_DEL_KEY).then(() => {
+    redis.call('JSON.DEL', JSON_DEL_KEY).then(() => {
       console.log(`User ${ws.user_name} removed from Redis successfully.`);
     }).catch((err) => {
       console.error(`Failed to remove user ${ws.user_name} from Redis: `, err);
