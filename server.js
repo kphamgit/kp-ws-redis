@@ -81,7 +81,42 @@ subscriber.on("message", (channel, message) => {
 
 });
   
+
+function converter(inputData) {
+    const [count, ...data] = inputData;
+    //const [count, ...data] =  redis.call('FT.SEARCH', 'user_idx', query);
+    // console.log("Converter input data: ", inputData);
+    /*
+    Converter input data:  [
+  1,
+  'user:teacher',
+  [
+    '$',
+    '{"name":"teacher","live_question_number":"0","live_total_score":"999"}'
+  ]
+]
+    */
+
+    const results = [];
+    // go through data array in chunks of 2 (key and fields array)
+    for (let i = 0; i < data.length; i += 2) {
+      //console.log("Processing record: ", data[i], data[i + 1]);
+      const key = data[i]; // e.g., "user:teacher"
+      //console.log("Key: ", key);
+      const fieldsArray = data[i + 1]; // e.g., ["$", '{"name":"teacher","live_question_number":"0","live_total_score":"999"}']
+      //console.log("Fields array: ", fieldsArray);
+      // remove leading "$" from fields array and parse the JSON string to get the actual user data object
+      const userData = JSON.parse(fieldsArray[1]);
+      //console.log("Parsed user data: ", userData);
+      results.push(userData);
+    }
+    //console.log("EXIT Converter results: ", results);
+    return results;
   
+}
+
+
+
 
 //const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379"; // Use REDIS_URL from environment variable or default to local Redis
 // Create two Redis clients: one for subscribing and one for publishing/other commands
@@ -116,6 +151,21 @@ wss.on("connection", async (ws, req) => {
     const totalScore = await publisher.call('JSON.GET', `user:${user_name}`, '$.live_total_score');
     console.log(`Total live score for user ${user_name} after initialization: `, totalScore);
     // end test
+
+    
+    const welcomeMessage = JSON.stringify({
+      message_type: "welcome_message",
+      content: `Welcome ${user_name} to the WebSocket server!`,
+      user_name: user_name,
+      //other_connected_users: userRecords, // include info of all other connected users in the welcome message, so that client can update its UI accordingly
+      //live_quiz_id: liveQuizId // include current live_quiz_id in the welcome message, so that client can update its UI accordingly if a live quiz is already in progress when the user connects
+    });
+  
+    ws.send(welcomeMessage); // Send to this client only
+
+
+// The output is an array: [total_count, key_1, [field, value, ...], key_2, ...]
+
     const userJoinedMessage = JSON.stringify({
     message_type: "another_user_joined",
     user_name: user_name
@@ -217,6 +267,23 @@ user_name: 'student1'
               }
             });             
           }
+          else if (message_type === "TEST") {
+            console.log("Received TEST message. This is just for testing purposes.");
+            const user_name = parsedMsg.user_name;
+            //const found_user = await redis.call('JSON.GET', `user:${user_name}`, '$');
+            // Find a user by name
+            //const results = await redis.call('FT.SEARCH', 'user_idx', '*');
+
+            //console.log("Search results for user name ", user_name, ": ", results);
+
+            // find all users
+            const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
+
+            //console.log("Search results for all users: ", allUsersResults);
+            const userRecords = converter(allUsersResults);
+            console.log("Extracted user records: ", userRecords);
+
+          }
 
         } catch (e) {
             console.error("Failed to parse message as JSON: ", e);
@@ -246,6 +313,13 @@ Received message from client: {"message_type":"chat","content":"ww","user_name":
   ws.on("close", () => {
     console.log("WebSocket connection closed by client. url =", wsURL);
     console.log("Client disconnected. User", ws.user_name);
+    // use JSON.DEL to remove the user record from Redis when a user disconnects, so that the list of logged in users is always up to date
+    JSON_DEL_KEY = `user:${ws.user_name}`;
+    publisher.call('JSON.DEL', JSON_DEL_KEY).then(() => {
+      console.log(`User ${ws.user_name} removed from Redis successfully.`);
+    }).catch((err) => {
+      console.error(`Failed to remove user ${ws.user_name} from Redis: `, err);
+    });
     // note: user_name is attached to the WebSocket connection object in the connection handler, 
     // so we can access it here without having to parse the URL again
     // remove user_name from the list of logged in users in Redis
