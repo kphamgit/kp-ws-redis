@@ -61,7 +61,7 @@ const redisOptions = {
   */
   
 subscriber.on("message", async (channel, message) => {
-  //console.log(`Received notification from Redis channel ${channel}: ${message}`);
+  console.log(`Received notification from Redis channel ${channel}: ${message}`);
   
   let parsedMessage;
   try {
@@ -72,8 +72,36 @@ subscriber.on("message", async (channel, message) => {
       //console.log("Received live_quiz_id notification from Redis. ", parsedMessage);
     }
     if (parsedMessage.message_type === "live_question_number") {
+      // console.log("Received live_question_number notification from Redis. ", parsedMessage, " current connection belongs to:", );
       // kpham: note that live_question_number HAD BEEN saved to Redis store by Django before publishing the live_question_number message to Redis channel, so we can safely retrieve it here if needed.
       //console.log("Received live_question_number notification from Redis. ", parsedMessage);
+      const target_user_name = parsedMessage.target_user_name;
+      // clear field live_question_number for the target user in Redis,
+      // if target_user_name is "everybody", it means the live question is sent to all users, 
+      if (target_user_name === "everybody") {
+        console.log("live_question_number message is targeted to everybody. Sending the message to all connected clients.");
+        wss.clients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(message); // send the original message string to clients, since they can parse it as JSON themselves if needed
+          }
+        });
+        return; // exit the handler since we have broadcasted the message to all clients already
+      }
+      else {  // live_question_number sent to a specific user, so we only send the message to that specific user
+        console.log(`live_question_number message is targeted to user ${target_user_name}. Sending the message only to that user if they are connected.`);
+        wss.clients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN ) {
+            if (client.user_name === target_user_name) {
+              client.send(message); // send the original message string to the target user, since they can parse it as JSON themselves if needed
+            }
+          }
+          else {
+            console.log(`Client ${client.user_name} is not open. Cannot send live_question_number message to this client.`);
+          }
+        });
+        return; // exit the handler since we have sent the message to the target user already
+      }
+      // so we need to clear live_question_number for all users in Redis
     }
     if (parsedMessage.message_type === "live_score") {
       // kpham: note that live_score HAD BEEN saved to Redis store by Django before publishing the live_score message to Redis channel, so we can safely retrieve it here if needed.
@@ -86,38 +114,29 @@ subscriber.on("message", async (channel, message) => {
       });
 
     }
-    if( parsedMessage.message_type === "live_question_retrieved") {
+    if (parsedMessage.message_type === "live_question_retrieved") {
       //console.log("Received live_question_retrieved notification from Redis. : ", parsedMessage);
       // use FT.SEARCH to find all users
       const user_name = parsedMessage.user_name;
       const live_question_number = parsedMessage.content;
-
-      //console.log(" type of live_question_number is: ", typeof live_question_number);
-      //console.log(" live_question_number is: ", live_question_number); // an integer
-
       // use JSON module to update live_question_number for all users in Redis, so that when a new user connects after the live question is sent out, they will get the correct live_question_number in the welcome message and update their UI accordingly
       //console.log(`Updating live_question_number to ${live_question_number} for user ${user_name} in Redis.`);
       //await redis.call('JSON.SET', `user:${user_name}`, '$.live_question_number', JSON.stringify(live_question_number));
-      
-      const allUsersResultsb4 = await redis.call('FT.SEARCH', 'user_idx', '*');
-      const userRecordsb4 = converter(allUsersResultsb4);
-      //console.log(" ALL user records BEFORE updating live_question_number for user ", user_name, "is: ", userRecordsb4);
-    
-      //const qNumber = 5;
 
-// JSON.stringify(5) results in the string "5"
-    await redis.call('JSON.SET', `user:${user_name}`, '$.live_question_number', live_question_number);
-      //KPHAM: in the above expression, need to convert live_question_number to string first before JSON.stringify, 
-      // because if live_question_number is a number, then JSON.stringify will convert it to a string with quotes (e.g., "5"), and when we retrieve it later in the client side and try to use it as a number, it will cause issues. By converting it to string first, we ensure that the value stored in Redis is a plain string without extra quotes, so that when we retrieve it later, we can use it directly as a string or convert to number as needed without worrying about extra quotes.
-     
+      const allUsersResultsb4 = await redis.call('FT.SEARCH', 'user_idx', '*');
+      //const userRecordsb4 = converter(allUsersResultsb4);
+      //console.log(" ALL user records BEFORE updating live_question_number for user ", user_name, "is: ", userRecordsb4);
+
+      // JSON.stringify(5) results in the string "5"
+      await redis.call('JSON.SET', `user:${user_name}`, '$.live_question_number', live_question_number);
       const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
-      const userRecords = converter(allUsersResults);
-      console.log(" ALL user records AFTER updating live_question_number for user ", user_name, "is: ", userRecords);
-      
-      }
-    if (parsedMessage.message_type === "live_score") {
-      console.log("Received live_score notification from Redis: ", parsedMessage, " question_number: ", parsedMessage.content.live_question_number);
+      //const userRecords = converter(allUsersResults);
+      //console.log(" ALL user records AFTER updating live_question_number for user ", user_name, "is: ", userRecords);
+
     }
+    //if (parsedMessage.message_type === "live_score") {
+      //console.log("Received live_score notification from Redis: ", parsedMessage, " question_number: ", parsedMessage.content.live_question_number);
+    //}
     // broadcast the message to all connected WebSocket clients, so that they can update their UIs accordingly
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
@@ -172,11 +191,12 @@ wss.on("connection", async (ws, req) => {
   // attach user_name to the WebSocket connection object so that it can be accessed
   // in message handlers (including close handler) without having to parse the URL again
     ws.user_name = user_name;
+    console.log(`********* User ${user_name} connected. WebSocket URL: ${wsURL}`);
 
   //console.log("*********** User", user_name, "connected. WebSocket URL:", wsURL);
   // get all users from Redis and print out for debugging
   const all_users_before = await redis.call('FT.SEARCH', 'user_idx', '*');
-  console.log("All users in Redis before adding new user: ", all_users_before);
+  //console.log("All users in Redis before adding new user: ", all_users_before);
   
   // debug
   const userRecord = await redis.call('JSON.GET', `user:${user_name}`);
@@ -248,7 +268,7 @@ wss.on("connection", async (ws, req) => {
       });
 
   ws.on("message", async (msg) => {
-        //console.log(`Received message from client: ${msg}`);
+        //console.log(`*********** Received message from client: ${msg}`);
         let parsedMsg;
         try {
           parsedMsg = JSON.parse(msg);  // parse msg as JSON string into a JavaScript object
@@ -268,7 +288,10 @@ user_name: 'student1'
               // you don't have to respond to pings if you don't want to, but it's a common convention to do so
               //ws.send("pong");
           }
-          else if (message_type === "chat") {
+          else if (message_type === "disconnect_user") {
+
+          } //video_segment_number
+          else if (message_type === "chat" || message_type === "video_segment_number") {
             // Broadcast chat message to all connected clients
             //console.log("receive ", parsedMsg.message_type, ". Broadcasting chat message to all clients.", "message content: ", parsedMsg.content);
             wss.clients.forEach((client) => {
