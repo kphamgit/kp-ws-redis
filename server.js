@@ -103,6 +103,7 @@ subscriber.on("message", async (channel, message) => {
       }
       // so we need to clear live_question_number for all users in Redis
     }
+    //recording_received
     if (parsedMessage.message_type === "live_score") {
       // kpham: note that live_score HAD BEEN saved to Redis store by Django before publishing the live_score message to Redis channel, so we can safely retrieve it here if needed.
       //console.log("Received live_score notification from Redis. ", parsedMessage);
@@ -133,6 +134,22 @@ subscriber.on("message", async (channel, message) => {
       //const userRecords = converter(allUsersResults);
       //console.log(" ALL user records AFTER updating live_question_number for user ", user_name, "is: ", userRecords);
 
+    }
+    if (parsedMessage.message_type === "recording_received") {
+      //const s3_key = parsedMessage.content;
+      // only send to the teacher, 
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN ) {
+              //console.log(`Checking client ${client.user_name} for recording_received message. `);
+              if (client.user_name === "teacher") {
+                client.send(message); // send the original message string to the teacher, since they can parse it as JSON themselves if needed
+              }
+            }
+            else {
+              console.log(`Client ${client.user_name} is not open. Cannot send recording_received message to this client.`);
+            }
+          });
+      //console.log("Received recording_received notification from Redis: ", parsedMessage);
     }
     //if (parsedMessage.message_type === "live_score") {
       //console.log("Received live_score notification from Redis: ", parsedMessage, " question_number: ", parsedMessage.content.live_question_number);
