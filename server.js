@@ -243,12 +243,18 @@ wss.on("connection", async (ws, req) => {
     await redis.call('JSON.SET', `user:${user_name}`, '$', JSON.stringify(newUser));
 
     const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
-    //console.log("RAW Search results for all users after ADDING: ", allUsersResults);
+    console.log("RAW Search results for all users after ADDING: ", allUsersResults);
+
+    // exclude the newly connected user from the list of other connected users in the welcome message
+    
 
     //console.log("Search results for all users: ", allUsersResults);
     const userRecords = converter(allUsersResults);
-    //console.log("Extracted user records (using indices) for welcome message: ", userRecords);
-
+    console.log("Extracted user records (using indices) for welcome message: ", userRecords);
+    // remove the newly connected user from the list of other connected users in the welcome message, 
+    // so that the client won't see themselves in the list of "other connected users" in the UI
+    // const otherConnectedUsers = userRecords.filter(user => user.name !== user_name);
+    // console.log(`List of other connected users (excluding the newly connected user ${user_name}) for welcome message: `, otherConnectedUsers);
     // retrieve live_quiz_id from Redis (if any) and include it in the welcome message, so that client can update its UI accordingly if a live quiz is already in progress when the user connects
     const live_quiz_id = await redis.call('GET', 'live_quiz_id');
     const live_question_number = await redis.call('GET', 'live_question_number');
@@ -259,7 +265,7 @@ wss.on("connection", async (ws, req) => {
       message_type: "welcome_message",
       content: `Welcome ${user_name} to the WebSocket server!`,
       user_name: user_name,
-      other_connected_users: userRecords, // include info of all other connected users in the welcome message, so that client can update its UI accordingly
+      connected_users: userRecords, // include info of all other connected users in the welcome message, so that client can update its UI accordingly
       live_quiz_id: live_quiz_id, // include current live_quiz_id in the welcome message, so that client can update its UI accordingly if a live quiz is already in progress
       live_question_number: live_question_number_for_message, // include current live_question_number in the welcome message, 
       // so that client can update its UI accordingly if a live quiz is already in progress and a question has been sent out
@@ -343,8 +349,8 @@ user_name: 'student1'
               }
             });             
           }
-          else if (message_type === "TEST") {
-            //console.log("Received TEST message. This is just for testing purposes.");
+          else if (message_type === "GET_REDIS_USER_DATA") {
+            //console.log("Received GET_REDIS_USER_DATA message. This is just for testing purposes.");
             const user_name = parsedMsg.user_name;
 
             // find all users
@@ -378,10 +384,10 @@ user_name: 'student1'
               // use FT.SEARCH to find all users except user_name "teacher"
               // const allUsersExceptTeachers = await redis.call('FT.SEARCH', 'user_idx', '* -@name:teacher');
               // The minus sign (-) acts as a "NOT" operator
-                const allUsersExceptTeachers = await redis.call('FT.SEARCH', 'user_idx', '-@name:teacher');
+                const allUsersExceptAdmin = await redis.call('FT.SEARCH', 'user_idx', '-@name:admin');
 
               //const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
-              const userRecords = converter(allUsersExceptTeachers);
+              const userRecords = converter(allUsersExceptAdmin);
               //console.log(" ALL user records BEFORE clearing Redis store: ", userRecords);
   
               // use JSON.DEL to remove each user record from Redis
