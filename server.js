@@ -217,40 +217,62 @@ wss.on("connection", async (ws, req) => {
   
   // debug
   const userRecord = await redis.call('JSON.GET', `user:${user_name}`);
-  //console.log(`User record for ${user_name} before adding to Redis: `, userRecord); // should be null since the user hasn't been added to Redis yet
-  // end debug
-  // if userRecord exists, extract live_total_score and use it in the newUser object,
+  console.log(`User record in Redis store for ${user_name} before adding to Redis: `, userRecord); // should be null since the user hasn't been added to Redis yet
+  // if useRecords doesn't exist, it means this user is connecting for the first time, so we will create a new user record for them in Redis with default values for live_total_score and live_question_number, and then include those default values in the welcome message that we send to the client, so that the client can display those default values in the UI until they get updated by subsequent messages (e.g., when the user attempts a live question and gets a live_score update from Django via Redis)
+  if (!userRecord) {
+    console.log(`User ${user_name} does not exist in Redis. This is a new user connection. Creating a new user record in Redis with default values for live_total_score and live_question_number.`);
+    const newUser = {
+      name: user_name,
+      live_question_number: 0, // default dummy value for live_question_number if user is new and doesn't have a record in Redis yet
+      live_total_score: 999, // default dummy value for live_total_score if user is new and doesn't have a record in Redis yet
+      is_logged_in: "true",
+      // need to initialize these values so that JSON.GET won't return null later
+      // when we try to update them
+    };
+    // add newUser to Redis store
+    await redis.call('JSON.SET', `user:${user_name}`, '$', JSON.stringify(newUser));
+  }
+  else {  // there is a record for this user in Redis store
+    // retrieve that record
+    console.log(`User ${user_name} already exists in Redis. This is a reconnecting user. Keeping the existing user record in Redis and updating the is_logged_in field to "true" in case it was set to "false" when the user disconnected, so that the client can get the correct live_total_score and live_question_number from Redis and display in the UI when they reconnect.`);
+    // retrieve the existing user record from Redis, 
+    const existingUserRecord = JSON.parse(userRecord);
+    console.log(`Existing user record for ${user_name} retrieved from Redis: `, existingUserRecord);
+    // update the is_logged_in field to "true" in case it was set to "false" when the user disconnected, so that the client can get the correct live_total_score and live_question_number from Redis and display in the UI when they reconnect
+    await redis.call('JSON.SET', `user:${user_name}`, '$.is_logged_in', '"true"').then(() => {
+      console.log(`User ${user_name} marked as logged in in Redis successfully.`);
+    }).catch((err) => {
+      console.error(`Failed to mark user ${user_name} as logged in in Redis: `, err);
+    });
+  }
+  
+  /*
+// if userRecord exists, extract live_total_score and use it in the newUser object,
   let live_total_score = 999; // default dummy value for live_total_score if user is new and doesn't have a record in Redis yet
   let live_question_number_to_send = 0; // default dummy value for live_question_number if user is new and doesn't have a record in Redis yet
   if (userRecord) {
+    console.log(`User ${user_name} already exists in Redis. Extracting existing live_total_score and live_question_number from Redis to include in the welcome message.`);
     const parsedUserRecord = JSON.parse(userRecord);
     live_total_score = parsedUserRecord.live_total_score;
     live_question_number_to_send = parsedUserRecord.live_question_number;
     //console.log(`User ${user_name} already exists in Redis. Using existing live_total_score: ${live_total_score} in the welcome message.`);
   }
-    // if user already exists in Redis, it means they are reconnecting after a disconnection, so we should keep their existing live_total_score instead of resetting it to 999, so that they won't lose their accumulated score when they reconnect
-  const newUser = {
-      name: user_name,
-      live_question_number: live_question_number_to_send, // initial dummy value to indicate no question yet
-      live_total_score: live_total_score, // initial dummy value to indicate no score yet
-      is_logged_in: "true",
-      // need to initialize these values so that JSON.GET won't return null later
-      // when we try to update them
-      // see comments in live_score message handler above
-  };
+  */
 
+    // if user already exists in Redis, it means they are reconnecting after a disconnection, so we should keep their existing live_total_score instead of resetting it to 999, so that they won't lose their accumulated score when they reconnect
+  
     //console.log("**************** Storing new user in Redis: ", newUser);
-    await redis.call('JSON.SET', `user:${user_name}`, '$', JSON.stringify(newUser));
+    //await redis.call('JSON.SET', `user:${user_name}`, '$', JSON.stringify(newUser));
 
     const allUsersResults = await redis.call('FT.SEARCH', 'user_idx', '*');
-    console.log("RAW Search results for all users after ADDING: ", allUsersResults);
+    //console.log("RAW Search results for all users after ADDING: ", allUsersResults);
 
     // exclude the newly connected user from the list of other connected users in the welcome message
     
 
     //console.log("Search results for all users: ", allUsersResults);
     const userRecords = converter(allUsersResults);
-    console.log("Extracted user records (using indices) for welcome message: ", userRecords);
+    //console.log("Extracted user records (using indices) for welcome message: ", userRecords);
     // remove the newly connected user from the list of other connected users in the welcome message, 
     // so that the client won't see themselves in the list of "other connected users" in the UI
     // const otherConnectedUsers = userRecords.filter(user => user.name !== user_name);
