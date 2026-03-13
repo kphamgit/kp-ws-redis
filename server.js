@@ -239,7 +239,7 @@ wss.on("connection", async (ws, req) => {
     console.log(`User ${user_name} already exists in Redis. This is a reconnecting user. Keeping the existing user record in Redis and updating the is_logged_in field to "true" in case it was set to "false" when the user disconnected, so that the client can get the correct live_total_score and live_question_number from Redis and display in the UI when they reconnect.`);
     // retrieve the existing user record from Redis, 
     const existingUserRecord = JSON.parse(userRecord);
-    console.log(`Existing user record for ${user_name} retrieved from Redis: `, existingUserRecord);
+    console.log(`EEEExisting user record for ${user_name} retrieved from Redis: `, existingUserRecord);
     // update the is_logged_in field to "true" in case it was set to "false" when the user disconnected, so that the client can get the correct live_total_score and live_question_number from Redis and display in the UI when they reconnect
     await redis.call('JSON.SET', `user:${user_name}`, '$.is_logged_in', '"true"').then(() => {
       console.log(`User ${user_name} marked as logged in in Redis successfully.`);
@@ -333,7 +333,7 @@ user_name: 'student1'
           if (message_type === "ping") {
               //console.log("Received 'ping' from client. ws object: ", ws.user_name);
               // you don't have to respond to pings if you don't want to, but it's a common convention to do so
-              console.log("Received 'ping' from client", ws.user_name, ". Responding with 'pong'.");
+              console.log("RRRRR eceived 'ping' from client", ws.user_name, ". Responding with 'pong'.");
               // soned "pong" as JSON data
               ws.send(JSON.stringify({ message_type: "pong", content: "pong " }));
               //ws.send("pong");
