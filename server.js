@@ -105,17 +105,48 @@ subscriber.on("message", async (channel, message) => {
     }
     //recording_received
     if (parsedMessage.message_type === "live_score") {
+      //console.log("Received live_score notification from Redis. ", parsedMessage);
       // kpham: note that live_score HAD BEEN saved to Redis store by Django before publishing the live_score message to Redis channel, so we can safely retrieve it here if needed.
       //console.log("Received live_score notification from Redis. ", parsedMessage);
       // clear field live_question_number for the user in Redis,
       await redis.call('JSON.SET', `user:${parsedMessage.user_name}`, '$.live_question_number', '0');
       /*
-      redis.call('JSON.SET', `user:${parsedMessage.user_name}`, '$.live_question_number', '0').then(() => {
-        console.log(`live_question_number reset to 0 for user ${parsedMessage.user_name} in Redis successfully.`);
-      }).catch((err) => {
-        console.error(`Failed to reset live_question_number for user ${parsedMessage.user_name} in Redis: `, err);
-      });
-    */   
+ {
+  message_type: 'live_score',
+  content: { score: 5, live_total_score: 10 },
+  user_name: 'student1',
+  user_answer: '  is'
+}
+      */
+      // send live_score with answer to teacher 
+        wss.clients.forEach((client) => {
+              if (client.readyState === WebSocket.OPEN ) {
+                //console.log(`Checking client ${client.user_name} for live_score message. `);
+                if (client.user_name === "teacher") {
+                  client.send(message); // send the original message string to the teacher, since they can parse it as JSON themselves if needed
+                }
+              }
+              else {
+                console.log(`Client ${client.user_name} is not open. Cannot send live_score message to this client.`);
+              }
+            });
+      // remove user_answer from parsedMessage before broadcasting to clients, 
+      // since other users (i.e, students) don't need to see the user_answer in the live_score message,
+        delete parsedMessage.user_answer; // remove user_answer field from parsedMessage object, so that when we broadcast the live_score message to all clients, it won't contain the user_answer field anymore
+        // send message to all clients except the teacher, 
+        wss.clients.forEach((client) => {
+              if (client.readyState === WebSocket.OPEN ) {
+                //console.log(`Checking client ${client.user_name} for live_score message to broadcast. `);
+                if (client.user_name !== "teacher") {
+                  client.send(JSON.stringify(parsedMessage)); // send the modified message without user_answer field to all clients except the teacher, since they can parse it as JSON themselves if needed
+                }
+              }
+              else {
+                console.log(`Client ${client.user_name} is not open. Cannot send live_score message to this client.`);
+              }
+            });
+            return // exit the handler since we have sent the live_score message to the teacher and other clients already
+
     }
     if (parsedMessage.message_type === "live_question_retrieved") {
       //console.log("Received live_question_retrieved notification from Redis. : ", parsedMessage);
@@ -210,7 +241,7 @@ wss.on("connection", async (ws, req) => {
   // attach user_name to the WebSocket connection object so that it can be accessed
   // in message handlers (including close handler) without having to parse the URL again
     ws.user_name = user_name;
-    console.log(`********* User ${user_name} connected. WebSocket URL: ${wsURL}`);
+    //console.log(`********* User ${user_name} connected. WebSocket URL: ${wsURL}`);
 
   //console.log("*********** User", user_name, "connected. WebSocket URL:", wsURL);
   // get all users from Redis and print out for debugging
@@ -219,10 +250,10 @@ wss.on("connection", async (ws, req) => {
   
   // debug
   const userRecord = await redis.call('JSON.GET', `user:${user_name}`);
-  console.log(`User record in Redis store for ${user_name} before adding to Redis: `, userRecord); // should be null since the user hasn't been added to Redis yet
+  //console.log(`User record in Redis store for ${user_name} before adding to Redis: `, userRecord); // should be null since the user hasn't been added to Redis yet
   // if useRecords doesn't exist, it means this user is connecting for the first time, so we will create a new user record for them in Redis with default values for live_total_score and live_question_number, and then include those default values in the welcome message that we send to the client, so that the client can display those default values in the UI until they get updated by subsequent messages (e.g., when the user attempts a live question and gets a live_score update from Django via Redis)
   if (!userRecord) {
-    console.log(`User ${user_name} does not exist in Redis. This is a new user connection. Creating a new user record in Redis with default values for live_total_score and live_question_number.`);
+    //console.log(`User ${user_name} does not exist in Redis. This is a new user connection. Creating a new user record in Redis with default values for live_total_score and live_question_number.`);
     const newUser = {
       name: user_name,
       live_question_number: 0, // default dummy value for live_question_number if user is new and doesn't have a record in Redis yet
@@ -236,10 +267,10 @@ wss.on("connection", async (ws, req) => {
   }
   else {  // there is a record for this user in Redis store
     // retrieve that record
-    console.log(`User ${user_name} already exists in Redis. This is a reconnecting user. Keeping the existing user record in Redis and updating the is_logged_in field to "true" in case it was set to "false" when the user disconnected, so that the client can get the correct live_total_score and live_question_number from Redis and display in the UI when they reconnect.`);
+    //console.log(`User ${user_name} already exists in Redis. This is a reconnecting user. Keeping the existing user record in Redis and updating the is_logged_in field to "true" in case it was set to "false" when the user disconnected, so that the client can get the correct live_total_score and live_question_number from Redis and display in the UI when they reconnect.`);
     // retrieve the existing user record from Redis, 
     const existingUserRecord = JSON.parse(userRecord);
-    console.log(`EEEExisting user record for ${user_name} retrieved from Redis: `, existingUserRecord);
+    //console.log(`EEEExisting user record for ${user_name} retrieved from Redis: `, existingUserRecord);
     // update the is_logged_in field to "true" in case it was set to "false" when the user disconnected, so that the client can get the correct live_total_score and live_question_number from Redis and display in the UI when they reconnect
     await redis.call('JSON.SET', `user:${user_name}`, '$.is_logged_in', '"true"').then(() => {
       console.log(`User ${user_name} marked as logged in in Redis successfully.`);
@@ -333,7 +364,7 @@ user_name: 'student1'
           if (message_type === "ping") {
               //console.log("Received 'ping' from client. ws object: ", ws.user_name);
               // you don't have to respond to pings if you don't want to, but it's a common convention to do so
-              console.log("RRRRR eceived 'ping' from client", ws.user_name, ". Responding with 'pong'.");
+              //console.log("RRRRR eceived 'ping' from client", ws.user_name, ". Responding with 'pong'.");
               // soned "pong" as JSON data
               ws.send(JSON.stringify({ message_type: "pong", content: "pong " }));
               //ws.send("pong");
