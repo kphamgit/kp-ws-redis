@@ -32,7 +32,24 @@ const redisOptions = {
   const redis = new Redis(redisUrl, options);
   const subscriber = new Redis(redisUrl, options);
   
-  redis.on('ready', () => console.log(`🚀 Redis connected to: ${redisUrl}`));
+  redis.on('ready', async () => {
+    console.log(`🚀 Redis connected to: ${redisUrl}`);
+    try {
+      await redis.call('FT.CREATE', 'user_idx', 'ON', 'JSON', 'PREFIX', '1', 'user:', 'SCHEMA',
+        '$.name', 'AS', 'name', 'TEXT',
+        '$.live_question_number', 'AS', 'live_question_number', 'NUMERIC',
+        '$.live_total_score', 'AS', 'live_total_score', 'NUMERIC',
+        '$.is_logged_in', 'AS', 'is_logged_in', 'TAG'
+      );
+      console.log('Created user_idx');
+    } catch (e) {
+      if (e.message.includes('Index already exists')) {
+        console.log('user_idx already exists, skipping');
+      } else {
+        console.error('Failed to create user_idx:', e);
+      }
+    }
+  });
 
   // Subscribe to the "notifications" channel to receive messages published to that channel
   // from Django
