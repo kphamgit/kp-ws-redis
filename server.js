@@ -247,8 +247,30 @@ function converter(inputData) {
 // Create two Redis clients: one for subscribing and one for publishing/other commands
 //console.log("Connecting to Redis at: ", REDIS_URL);
 
+// Detect dead connections (e.g. client's network dropped without a clean TCP close)
+// using the native WebSocket ping/pong protocol, since ws.on("close") never fires for those.
+function heartbeat() {
+  this.isAlive = true;
+}
+
+const heartbeatInterval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      console.log(`Terminating dead connection for user ${ws.user_name}`);
+      return ws.terminate(); // triggers the "close" event, so existing Redis/broadcast cleanup runs
+    }
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30000);
+
+wss.on("close", () => clearInterval(heartbeatInterval));
+
 // Handle WebSocket connections
 wss.on("connection", async (ws, req) => {
+  ws.isAlive = true;
+  ws.on("pong", heartbeat);
+
   const wsURL = req.url;
   //console.log("Client connected via native WebSocket url=", wsURL);
   //client connected via native WebSocket url= /teacher/
@@ -453,6 +475,26 @@ user_name: 'student1'
             //console.log("Search results for all users: ", allUsersResults);
          
 
+          }
+          else if (message_type === "SET_ASSIGNMENT") {
+              const assignment = parsedMsg.assignment;
+              const target_user = parsedMsg.target_user || "all";
+              await redis.call('SET', 'assignment', assignment);
+              console.log(`Assignment saved to Redis: "${assignment}" for target: "${target_user}"`);
+              const outMsg = JSON.stringify({ message_type: "assignment", content: assignment, target_user });
+              if (target_user === "all") {
+                wss.clients.forEach((client) => {
+                  if (client.readyState === WebSocket.OPEN && client.user_name !== "admin") {
+                    client.send(outMsg);
+                  }
+                });
+              } else {
+                wss.clients.forEach((client) => {
+                  if (client.readyState === WebSocket.OPEN && client.user_name === target_user) {
+                    client.send(outMsg);
+                  }
+                });
+              }
           }
           else if (message_type === "CLEAR_REDIS_STORE") {
               //console.log("Received CLEAR_REDIS_STORE message. Clearing all user records from Redis store for testing purposes.");
